@@ -1,0 +1,91 @@
+import torch
+from transformers import AutoModelForQuestionAnswering, AutoTokenizer
+import gtts
+import io
+import pygame
+import speech_recognition as sr
+
+# Define your context
+context = "I’m good, but I’ve been feeling unusually tired for the past month and occasionally feel short of breath, especially when climbing stairs. I don’t have any chest pain, dizziness, or palpitations. I’ve been taking my blood pressure medication regularly, but I admit I haven’t been monitoring it as frequently as I should. My father had a heart attack at the age of 50, which has always been a concern for me. My lifestyle is largely sedentary due to my desk job, and I don’t exercise regularly. My diet could be healthier, as I often eat takeout due to my busy schedule. I drink alcohol socially but don’t smoke. I haven’t noticed any significant changes in my health recently, aside from the fatigue, and I haven’t made any changes to my medication. I started it a few days ago."
+
+# Load model and tokenizer
+model_name = "deepset/roberta-base-squad2"
+model = AutoModelForQuestionAnswering.from_pretrained(model_name)
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+
+def text_to_speech(text):
+    if not text.strip():  # Check if text is empty or only whitespace
+        text = "Sorry, I have no response to speak."
+    tts = gtts.gTTS(text)
+    with io.BytesIO() as audio_buffer:
+        tts.write_to_fp(audio_buffer)
+        audio_buffer.seek(0)
+        return audio_buffer.getvalue()
+
+
+def play_audio(audio_data):
+    # Initialize pygame mixer
+    pygame.mixer.init(frequency=22050)
+    sound = pygame.mixer.Sound(io.BytesIO(audio_data))
+    sound.play()
+    pygame.time.wait(int(sound.get_length() * 1000))  # Wait until sound has finished playing
+
+
+def record_audio():
+    recognizer = sr.Recognizer()
+    with sr.Microphone() as source:
+        print("Listening for a question...")
+        audio = recognizer.listen(source)
+    try:
+        question = recognizer.recognize_google(audio)
+        print(f"Recorded question: {question}")
+        return question
+    except sr.UnknownValueError:
+        print("Sorry, I could not understand the audio.")
+        return None
+    except sr.RequestError:
+        print("Sorry, there was an error with the speech recognition service.")
+        return None
+
+
+def answer_question(question):
+    if question is None:
+        return "No question recorded."
+
+    # Tokenize the input question and context
+    inputs = tokenizer(question, context, return_tensors="pt")
+
+    # Get model output
+    output = model(**inputs)
+
+    # Extract the start and end indices of the answer
+    answer_start_idx = torch.argmax(output.start_logits)
+    answer_end_idx = torch.argmax(output.end_logits)
+
+    # Extract the answer tokens and decode them into a string
+    answer_tokens = inputs.input_ids[0, answer_start_idx:answer_end_idx + 1]
+    answer = tokenizer.decode(answer_tokens, skip_special_tokens=True)
+
+    return answer
+
+
+# Main loop
+while True:
+    # Record audio from the microphone
+    question = record_audio()
+
+    # Check if the user wants to exit
+    if question and "exit" in question.lower():
+        print("Exiting program...")
+        break
+
+    # Generate answer
+    answer = answer_question(question)
+
+    # Print and play the answer
+    if answer:
+        answer_text = f"Answer: {answer}"
+        print(answer_text)
+        answer_audio = text_to_speech(answer_text)
+        play_audio(answer_audio)
